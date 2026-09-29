@@ -1,0 +1,435 @@
+{
+	"name": "coding-agent-sessions-history",
+	"displayName": "Coding Agent Sessions History",
+	"description": "Browse, search and export your Claude Code and Codex session history. Fully local, no telemetry, no paywall.",
+	"version": "0.1.0",
+	"publisher": "methodox",
+	"license": "MIT",
+	"author": "Charles Zhang",
+	"repository": "github:MethodoxTech/coding-agent-sessions-history-vscode",
+	"icon": "media/icon.png",
+	"engines": {
+		"vscode": "^1.85.0"
+	},
+	"categories": [
+		"Other",
+		"Visualization"
+	],
+	"keywords": [
+		"codex",
+		"openai",
+		"session history",
+		"conversation",
+		"transcript",
+		"AI",
+		"claude",
+		"claude code"
+	],
+	"activationEvents": [],
+	"main": "./out/extension.js",
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "codingAgentSessions",
+					"title": "Coding Agent Sessions",
+					"icon": "media/activity-icon.svg"
+				}
+			]
+		},
+		"views": {
+			"codingAgentSessions": [
+				{
+					"id": "codingAgentSessions.tree",
+					"name": "Sessions",
+					"icon": "media/activity-icon.svg",
+					"when": "config.codingAgentSessions.showInActivityBar"
+				}
+			]
+		},
+		"viewsWelcome": [
+			{
+				"view": "codingAgentSessions.tree",
+				"contents": "No sessions found. Configure the session home directories or run your coding agent, then refresh.\n[Open Settings](command:codingAgentSessions.openSettings)\n[Refresh](command:codingAgentSessions.refresh)"
+			}
+		],
+		"commands": [
+			{
+				"command": "codingAgentSessions.openBrowser",
+				"title": "Open Session Browser",
+				"category": "Coding Agent Sessions",
+				"icon": "$(window)"
+			},
+			{
+				"command": "codingAgentSessions.refresh",
+				"title": "Refresh",
+				"category": "Coding Agent Sessions",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "codingAgentSessions.rescan",
+				"title": "Rescan All Sessions (Clear Cache)",
+				"category": "Coding Agent Sessions"
+			},
+			{
+				"command": "codingAgentSessions.openSession",
+				"title": "Open Session",
+				"category": "Coding Agent Sessions"
+			},
+			{
+				"command": "codingAgentSessions.search",
+				"title": "Search Sessions",
+				"category": "Coding Agent Sessions",
+				"icon": "$(search)"
+			},
+			{
+				"command": "codingAgentSessions.showStats",
+				"title": "Show Statistics",
+				"category": "Coding Agent Sessions",
+				"icon": "$(graph)"
+			},
+			{
+				"command": "codingAgentSessions.resume",
+				"title": "Resume Session in Terminal",
+				"category": "Coding Agent Sessions",
+				"icon": "$(debug-continue)"
+			},
+			{
+				"command": "codingAgentSessions.exportMarkdown",
+				"title": "Export Session as Markdown",
+				"category": "Coding Agent Sessions",
+				"icon": "$(markdown)"
+			},
+			{
+				"command": "codingAgentSessions.exportRange",
+				"title": "Export Sessions in Date Range as Markdown",
+				"category": "Coding Agent Sessions"
+			},
+			{
+				"command": "codingAgentSessions.toggleBookmark",
+				"title": "Toggle Bookmark",
+				"category": "Coding Agent Sessions",
+				"icon": "$(star-empty)"
+			},
+			{
+				"command": "codingAgentSessions.removeBookmark",
+				"title": "Remove Bookmark",
+				"category": "Coding Agent Sessions",
+				"icon": "$(star-full)"
+			},
+			{
+				"command": "codingAgentSessions.toggleBookmarkFilter",
+				"title": "Show Bookmarked Sessions Only",
+				"category": "Coding Agent Sessions",
+				"icon": "$(star-empty)"
+			},
+			{
+				"command": "codingAgentSessions.clearBookmarkFilter",
+				"title": "Show All Sessions",
+				"category": "Coding Agent Sessions",
+				"icon": "$(star-full)"
+			},
+			{
+				"command": "codingAgentSessions.groupByDate",
+				"title": "Group Sessions by Date",
+				"category": "Coding Agent Sessions",
+				"icon": "$(calendar)"
+			},
+			{
+				"command": "codingAgentSessions.groupByProject",
+				"title": "Group Sessions by Project",
+				"category": "Coding Agent Sessions",
+				"icon": "$(folder)"
+			},
+			{
+				"command": "codingAgentSessions.copyTitle",
+				"title": "Copy Session Title",
+				"category": "Coding Agent Sessions"
+			},
+			{
+				"command": "codingAgentSessions.copySessionId",
+				"title": "Copy Session ID",
+				"category": "Coding Agent Sessions"
+			},
+			{
+				"command": "codingAgentSessions.revealTranscript",
+				"title": "Reveal Transcript File",
+				"category": "Coding Agent Sessions"
+			},
+			{
+				"command": "codingAgentSessions.openTranscript",
+				"title": "Open Raw Transcript (.jsonl)",
+				"category": "Coding Agent Sessions"
+			},
+			{
+				"command": "codingAgentSessions.openProjectFolder",
+				"title": "Open Project Folder",
+				"category": "Coding Agent Sessions"
+			},
+			{
+				"command": "codingAgentSessions.openSettings",
+				"title": "Open Settings",
+				"category": "Coding Agent Sessions"
+			},
+			{
+				"command": "codingAgentSessions.selectAgent",
+				"title": "Select Agent: Claude / Codex / Both",
+				"category": "Coding Agent Sessions",
+				"icon": "$(filter)"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "codingAgentSessions.openSession",
+					"when": "false"
+				},
+				{
+					"command": "codingAgentSessions.toggleBookmark",
+					"when": "false"
+				},
+				{
+					"command": "codingAgentSessions.removeBookmark",
+					"when": "false"
+				},
+				{
+					"command": "codingAgentSessions.clearBookmarkFilter",
+					"when": "false"
+				},
+				{
+					"command": "codingAgentSessions.groupByDate",
+					"when": "false"
+				},
+				{
+					"command": "codingAgentSessions.groupByProject",
+					"when": "false"
+				},
+				{
+					"command": "codingAgentSessions.copySessionId",
+					"when": "false"
+				},
+				{
+					"command": "codingAgentSessions.revealTranscript",
+					"when": "false"
+				},
+				{
+					"command": "codingAgentSessions.openTranscript",
+					"when": "false"
+				},
+				{
+					"command": "codingAgentSessions.openProjectFolder",
+					"when": "false"
+				},
+				{
+					"command": "codingAgentSessions.copyTitle",
+					"when": "false"
+				}
+			],
+			"view/title": [
+				{
+					"command": "codingAgentSessions.search",
+					"when": "view == codingAgentSessions.tree",
+					"group": "navigation@1"
+				},
+				{
+					"command": "codingAgentSessions.toggleBookmarkFilter",
+					"when": "view == codingAgentSessions.tree && !codingAgentSessions.bookmarksOnly",
+					"group": "navigation@2"
+				},
+				{
+					"command": "codingAgentSessions.clearBookmarkFilter",
+					"when": "view == codingAgentSessions.tree && codingAgentSessions.bookmarksOnly",
+					"group": "navigation@2"
+				},
+				{
+					"command": "codingAgentSessions.openBrowser",
+					"when": "view == codingAgentSessions.tree",
+					"group": "navigation@3"
+				},
+				{
+					"command": "codingAgentSessions.refresh",
+					"when": "view == codingAgentSessions.tree",
+					"group": "navigation@4"
+				},
+				{
+					"command": "codingAgentSessions.groupByProject",
+					"when": "view == codingAgentSessions.tree && codingAgentSessions.groupBy == date",
+					"group": "1_group@1"
+				},
+				{
+					"command": "codingAgentSessions.groupByDate",
+					"when": "view == codingAgentSessions.tree && codingAgentSessions.groupBy != date",
+					"group": "1_group@1"
+				},
+				{
+					"command": "codingAgentSessions.showStats",
+					"when": "view == codingAgentSessions.tree",
+					"group": "2_tools@1"
+				},
+				{
+					"command": "codingAgentSessions.exportRange",
+					"when": "view == codingAgentSessions.tree",
+					"group": "2_tools@2"
+				},
+				{
+					"command": "codingAgentSessions.rescan",
+					"when": "view == codingAgentSessions.tree",
+					"group": "3_maintenance@1"
+				},
+				{
+					"command": "codingAgentSessions.selectAgent",
+					"when": "view == codingAgentSessions.tree",
+					"group": "navigation@0"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "codingAgentSessions.toggleBookmark",
+					"when": "view == codingAgentSessions.tree && viewItem == session.plain",
+					"group": "inline@1"
+				},
+				{
+					"command": "codingAgentSessions.removeBookmark",
+					"when": "view == codingAgentSessions.tree && viewItem == session.bookmarked",
+					"group": "inline@1"
+				},
+				{
+					"command": "codingAgentSessions.resume",
+					"when": "view == codingAgentSessions.tree && viewItem =~ /^session/",
+					"group": "1_run@1"
+				},
+				{
+					"command": "codingAgentSessions.exportMarkdown",
+					"when": "view == codingAgentSessions.tree && viewItem =~ /^session/",
+					"group": "2_export@1"
+				},
+				{
+					"command": "codingAgentSessions.copyTitle",
+					"when": "view == codingAgentSessions.tree && viewItem =~ /^session/",
+					"group": "3_copy@1"
+				},
+				{
+					"command": "codingAgentSessions.copySessionId",
+					"when": "view == codingAgentSessions.tree && viewItem =~ /^session/",
+					"group": "3_copy@2"
+				},
+				{
+					"command": "codingAgentSessions.openTranscript",
+					"when": "view == codingAgentSessions.tree && viewItem =~ /^session/",
+					"group": "4_open@1"
+				},
+				{
+					"command": "codingAgentSessions.revealTranscript",
+					"when": "view == codingAgentSessions.tree && viewItem =~ /^session/",
+					"group": "4_open@2"
+				},
+				{
+					"command": "codingAgentSessions.openProjectFolder",
+					"when": "view == codingAgentSessions.tree && viewItem == project",
+					"group": "4_open@1"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Coding Agent Sessions History",
+			"properties": {
+				"codingAgentSessions.showInActivityBar": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Show the Coding Agent Sessions icon in the activity bar. The browser is also available from the command palette."
+				},
+				"codingAgentSessions.claudeHome": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Absolute path to the Claude Code home directory that holds the `projects` folder. Leave empty to use `$CLAUDE_CONFIG_DIR` if set, otherwise `~/.claude`."
+				},
+				"codingAgentSessions.groupBy": {
+					"type": "string",
+					"enum": [
+						"date",
+						"project"
+					],
+					"default": "date",
+					"description": "How sessions are grouped in the Sessions tree view."
+				},
+				"codingAgentSessions.showThinking": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show collapsible thinking blocks in the conversation view."
+				},
+				"codingAgentSessions.showToolCalls": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show collapsible tool calls in the conversation view."
+				},
+				"codingAgentSessions.showSidechains": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show subagent (sidechain) messages in the conversation view."
+				},
+				"codingAgentSessions.toolOutputLimit": {
+					"type": "number",
+					"default": 4000,
+					"minimum": 200,
+					"maximum": 100000,
+					"description": "Maximum number of characters of tool output kept per tool call. Longer output is truncated."
+				},
+				"codingAgentSessions.pageSize": {
+					"type": "number",
+					"default": 60,
+					"minimum": 10,
+					"maximum": 1000,
+					"description": "Number of messages rendered per batch in the conversation view. Lower values keep very long sessions responsive."
+				},
+				"codingAgentSessions.deepSearchIncludesToolCalls": {
+					"type": "boolean",
+					"default": false,
+					"description": "Include tool inputs and outputs when running a deep search across all sessions."
+				},
+				"codingAgentSessions.autoRefresh": {
+					"type": "boolean",
+					"default": true,
+					"description": "Watch session transcripts and refresh automatically when they change."
+				},
+				"codingAgentSessions.resumeCommand": {
+					"type": "string",
+					"default": "claude --resume {sessionId}",
+					"markdownDescription": "Command run in the terminal by **Resume Session**. `{sessionId}` is replaced with the session id and `{projectPath}` with the project directory."
+				},
+				"codingAgentSessions.codexHome": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Codex home containing `sessions` and `archived_sessions`. Empty uses `$CODEX_HOME`, otherwise `~/.codex`."
+				},
+				"codingAgentSessions.codexResumeCommand": {
+					"type": "string",
+					"default": "codex resume {sessionId}",
+					"description": "Codex resume command. Supports {sessionId} and {projectPath}."
+				},
+				"codingAgentSessions.agentFilter": {
+					"type": "string",
+					"enum": [
+						"both",
+						"claude",
+						"codex"
+					],
+					"default": "both",
+					"description": "Show both agents, Claude Code only, or Codex only. Applies to browsing, search, statistics and exports."
+				}
+			}
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./",
+		"test": "npm run compile && node --test \"out/test/*.test.js\"",
+		"icon": "node scripts/generate-icon.js",
+		"package": "vsce package --no-dependencies"
+	},
+	"devDependencies": {
+		"@types/node": "^20.0.0",
+		"@types/vscode": "^1.85.0",
+		"typescript": "^5.3.0"
+	}
+}

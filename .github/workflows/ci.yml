@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Test
+        run: node --test "out/test/*.test.js"
+
+      - name: Package
+        if: matrix.os == 'ubuntu-latest'
+        run: npx --yes @vscode/vsce package --no-dependencies --out coding-agent-sessions-history.vsix
+
+      - name: Upload VSIX
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: coding-agent-sessions-history.vsix

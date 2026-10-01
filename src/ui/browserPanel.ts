@@ -97,12 +97,29 @@ export class BrowserPanel {
 			this.disposables,
 		);
 		this.disposables.push(this.bookmarks.onDidChange(() => this.postBookmarks()));
+		// Scans started anywhere — the tree, the file watcher, a refresh —
+		// stream into the list, so it never waits on a scan to finish.
+		const subscription = this.store.subscribe((event) => {
+			if (!this.ready) {
+				return;
+			}
+			if (event.type === "progress") {
+				this.post({ type: "scanProgress", ...event.progress });
+				return;
+			}
+			this.postSessions(event.sessions, !event.final);
+			if (event.final) {
+				this.post({ type: "busy", value: false });
+			}
+		});
+		this.disposables.push(new vscode.Disposable(() => subscription.dispose()));
 	}
 
 	/** Re-index and push the session list to the webview. */
 	async refresh(): Promise<void> {
 		this.searchAbort?.abort();
 		if (!this.ready) {
+			await this.store.load();
 			return;
 		}
 		await this.sendSessions();
@@ -116,9 +133,7 @@ export class BrowserPanel {
 				toolOutputLimit: configuration.get<number>("toolOutputLimit", 4000),
 				includeSidechains: configuration.get<boolean>("showSidechains", true),
 			});
-			const meta =
-				this.store.sessions.find((session) => session.filePath === filePath) ??
-				(await this.store.load()).find((session) => session.filePath === filePath);
+			const meta = await this.store.metaFor(filePath);
 
 			if (!meta) {
 				void vscode.window.showWarningMessage("That session is no longer on disk.");
@@ -160,7 +175,7 @@ export class BrowserPanel {
 			}
 			case "ready": {
 				this.ready = true;
-				await this.sendSessions();
+				void this.sendSessions();
 				if (this.pendingSession) {
 					await this.openSession(this.pendingSession.filePath);
 				}
@@ -263,8 +278,8 @@ export class BrowserPanel {
 			}
 
 			case "stats": {
-				const sessions = await this.store.load();
-				this.post({ type: "stats", stats: this.store.computeStats(sessions) });
+				// Recomputed when the scan finishes; see the webview's sessions handler.
+				this.post({ type: "stats", stats: this.store.computeStats(this.store.sessions) });
 				break;
 			}
 
@@ -351,20 +366,29 @@ export class BrowserPanel {
 		return this.store.sessions.find((session) => session.filePath === filePath);
 	}
 
+	/**
+	 * Show what is already indexed at once, then rescan. The scan's partial
+	 * and final results arrive through the store subscription.
+	 */
 	private async sendSessions(): Promise<void> {
+		if (this.store.sessions.length > 0) {
+			this.postSessions(this.store.sessions, true);
+		}
 		this.post({ type: "busy", value: true, label: "Indexing sessions" });
-		const sessions = await this.store.load((progress) => {
-			this.post({ type: "scanProgress", ...progress });
-		});
+		await this.store.load();
+	}
+
+	/** `partial` marks a list that a running scan will still change. */
+	private postSessions(sessions: SessionMeta[], partial: boolean): void {
 		this.post({
 			type: "sessions",
+			partial,
 			agentFilter: this.store.sourceFilter,
 			sessions,
 			projects: this.store.projects(sessions),
 			bookmarks: this.bookmarks.all,
 			projectsDirectory: this.store.projectsDirectory,
 		});
-		this.post({ type: "busy", value: false });
 	}
 
 	private postBookmarks(): void {

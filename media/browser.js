@@ -1531,7 +1531,13 @@
 				state.bookmarks = message.bookmarks || [];
 				if (state.project && !state.projects.some((p) => p.path === state.project))
 					state.project = "";
-				if (state.meta && !state.sessions.some((s) => s.filePath === state.meta.filePath)) {
+				// A partial list, sent while a scan runs, may simply not have
+				// reached the open session yet.
+				if (
+					!message.partial &&
+					state.meta &&
+					!state.sessions.some((s) => s.filePath === state.meta.filePath)
+				) {
 					state.meta = null;
 					state.selected = null;
 					state.messages = [];
@@ -1539,10 +1545,12 @@
 					el.conversation.hidden = true;
 					el.welcome.hidden = state.tab === "stats";
 				}
-				state.matches = [];
-				if (state.deep && state.filter.trim())
-					vscode.postMessage({ type: "deepSearch", query: state.filter });
-				if (state.tab === "stats") vscode.postMessage({ type: "stats" });
+				if (!message.partial) {
+					state.matches = [];
+					if (state.deep && state.filter.trim())
+						vscode.postMessage({ type: "deepSearch", query: state.filter });
+					if (state.tab === "stats") vscode.postMessage({ type: "stats" });
+				}
 				renderProjects();
 				renderList();
 				break;

@@ -64,9 +64,11 @@ class GroupTreeItem extends vscode.TreeItem {
 
 type TreeNode = GroupTreeItem | SessionTreeItem;
 
-export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
+export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
 	private readonly changed = new vscode.EventEmitter<TreeNode | undefined>();
 	readonly onDidChangeTreeData = this.changed.event;
+	private readonly subscription: { dispose(): void };
+	private started = false;
 
 	private filterText = "";
 	private bookmarksOnly = false;
@@ -75,7 +77,19 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 	constructor(
 		private readonly store: SessionStore,
 		private readonly bookmarks: BookmarkStore,
-	) {}
+	) {
+		// Redraw with partial results while a scan runs, and with the final list.
+		this.subscription = store.subscribe((event) => {
+			if (event.type === "sessions") {
+				this.refresh();
+			}
+		});
+	}
+
+	dispose(): void {
+		this.subscription.dispose();
+		this.changed.dispose();
+	}
 
 	get groupBy(): GroupBy {
 		const configured = vscode.workspace
@@ -111,6 +125,7 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 		return this.bookmarksOnly;
 	}
 
+	/** Redraw from the sessions the store already has. */
 	refresh(): void {
 		this.changed.fire(undefined);
 	}
@@ -130,7 +145,7 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 			);
 		}
 
-		const sessions = this.visibleSessions(await this.store.load());
+		const sessions = this.visibleSessions(await this.currentSessions());
 		if (sessions.length === 0) {
 			return [];
 		}
@@ -138,6 +153,23 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 		return this.groupBy === "project"
 			? this.groupByProject(sessions)
 			: this.groupByDate(sessions);
+	}
+
+	/**
+	 * The store's sessions as they stand — cached ones at first — rather than
+	 * waiting for a full scan. The first call starts that scan.
+	 */
+	private async currentSessions(): Promise<SessionMeta[]> {
+		if (!this.started) {
+			this.started = true;
+			void this.store.load();
+		}
+		// With nothing cached, wait for the scan's first results rather than
+		// flash the "no sessions" welcome.
+		if (this.store.sessions.length === 0 && this.store.isLoading) {
+			await this.store.nextUpdate();
+		}
+		return this.store.sessions;
 	}
 
 	private visibleSessions(all: SessionMeta[]): SessionMeta[] {

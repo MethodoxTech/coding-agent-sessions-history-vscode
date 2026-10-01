@@ -8,7 +8,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { scanCodexMeta, parseCodexSession } from "../codex/parser";
+import { CodexScanResume, parseCodexSession, scanCodexRollout } from "../codex/parser";
 
 import { extractMatchContext, scanSessionMeta } from "../claude/parser";
 import { parseSession } from "../claude/parser";
@@ -27,6 +27,8 @@ interface CacheEntry {
 	size: number;
 	/** null records a transcript that holds no messages, so it is not rescanned. */
 	meta: SessionMeta | null;
+	/** Where to continue a Codex rollout's scan once it has grown. */
+	resume?: CodexScanResume;
 }
 
 interface PersistedCache {
@@ -49,6 +51,15 @@ export interface ScanProgress {
 	parsed: number;
 }
 
+/** How often a long scan publishes what it has so far, and saves the cache. */
+const PARTIAL_INTERVAL_MS = 500;
+const SAVE_INTERVAL_MS = 5000;
+
+export type StoreEvent =
+	| { type: "progress"; progress: ScanProgress }
+	/** `final` is false while a scan is still running. */
+	| { type: "sessions"; sessions: SessionMeta[]; final: boolean };
+
 export interface DeepSearchOptions {
 	includeToolCalls?: boolean;
 	signal?: AbortSignal;
@@ -60,7 +71,10 @@ export class SessionStore {
 	private cache = new Map<string, CacheEntry>();
 	private loaded: SessionMeta[] = [];
 	private loading?: Promise<SessionMeta[]>;
+	/** A load was asked for while one was running; run another pass after it. */
+	private reloadRequested = false;
 	private revision = 0;
+	private readonly listeners = new Set<(event: StoreEvent) => void>();
 
 	constructor(
 		private readonly cachePath: string,
@@ -69,6 +83,49 @@ export class SessionStore {
 		private agentFilter: "both" | "claude" | "codex" = "both",
 	) {
 		this.loadCacheFromDisk();
+		// Show what the last session indexed straight away; the first scan
+		// then only corrects what changed since.
+		this.loaded = this.cachedSessions();
+	}
+
+	/** Partial and final scan results, and scan progress, as they happen. */
+	subscribe(listener: (event: StoreEvent) => void): { dispose(): void } {
+		this.listeners.add(listener);
+		return { dispose: () => this.listeners.delete(listener) };
+	}
+
+	get isLoading(): boolean {
+		return !!this.loading;
+	}
+
+	/** Resolves when the running scan next publishes sessions, or at once if none is running. */
+	nextUpdate(): Promise<void> {
+		const loading = this.loading;
+		if (!loading) {
+			return Promise.resolve();
+		}
+		return new Promise((resolve) => {
+			const subscription = this.subscribe((event) => {
+				if (event.type === "sessions") {
+					subscription.dispose();
+					resolve();
+				}
+			});
+			void loading.finally(() => {
+				subscription.dispose();
+				resolve();
+			});
+		});
+	}
+
+	private emit(event: StoreEvent): void {
+		for (const listener of this.listeners) {
+			try {
+				listener(event);
+			} catch {
+				// One broken view should not stop the others updating.
+			}
+		}
 	}
 
 	/** Point the store at a different Claude Code home and drop stale results. */
@@ -76,9 +133,9 @@ export class SessionStore {
 		if (this.claudeHome === claudeHome) {
 			return;
 		}
+		this.revision++;
 		this.claudeHome = claudeHome;
-		this.loaded = [];
-		this.loading = undefined;
+		this.loaded = this.cachedSessions();
 	}
 
 	configure(
@@ -90,7 +147,7 @@ export class SessionStore {
 		this.claudeHome = claudeHome;
 		this.codexHome = codexHome;
 		this.agentFilter = agentFilter;
-		this.loaded = [];
+		this.loaded = this.cachedSessions();
 	}
 
 	get sourceFilter(): string {
@@ -112,7 +169,10 @@ export class SessionStore {
 		return this.transcriptDirectories.join("; ");
 	}
 
-	/** Sessions from the last successful scan, without triggering a new one. */
+	/**
+	 * The current session list, without triggering a scan: cached results at
+	 * first, then partial results while a scan runs, then the scan's result.
+	 */
 	get sessions(): SessionMeta[] {
 		return this.loaded;
 	}
@@ -121,10 +181,15 @@ export class SessionStore {
 	 * Index every transcript, re-reading only the ones that changed.
 	 *
 	 * Concurrent callers share one scan; the tree view and the browser panel
-	 * both refresh on startup and would otherwise duplicate the work.
+	 * both refresh on startup and would otherwise duplicate the work. A load
+	 * asked for mid-scan runs one more (mostly cached) pass afterwards, so a
+	 * change that landed after the first pass listed the files is not missed.
+	 *
+	 * Partial results and progress also go to `subscribe` listeners.
 	 */
 	async load(onProgress?: (progress: ScanProgress) => void): Promise<SessionMeta[]> {
 		if (this.loading) {
+			this.reloadRequested = true;
 			return this.loading;
 		}
 		this.loading = (async () => {
@@ -132,8 +197,10 @@ export class SessionStore {
 			let sessions: SessionMeta[];
 			do {
 				revision = this.revision;
+				this.reloadRequested = false;
 				sessions = await this.scan(onProgress);
-			} while (revision !== this.revision);
+			} while (revision !== this.revision || this.reloadRequested);
+			this.emit({ type: "sessions", sessions, final: true });
 			return sessions;
 		})().finally(() => {
 			this.loading = undefined;
@@ -143,13 +210,23 @@ export class SessionStore {
 
 	private async scan(onProgress?: (progress: ScanProgress) => void): Promise<SessionMeta[]> {
 		const revision = this.revision;
-		const files = this.listTranscripts();
+		// Newest first, so a cold index fills in from the top of the list.
+		const files = this.listTranscripts().sort((a, b) => b.mtimeMs - a.mtimeMs);
 		const sessions: SessionMeta[] = [];
 		const seen = new Set<string>();
 		let dirty = false;
 		let parsed = 0;
+		let lastPartial = Date.now();
+		let lastSave = Date.now();
+
+		const progress = (scanned: number): void => {
+			const event = { scanned, total: files.length, parsed };
+			onProgress?.(event);
+			this.emit({ type: "progress", progress: event });
+		};
 
 		for (let index = 0; index < files.length; index++) {
+			if (revision !== this.revision) return [];
 			const file = files[index];
 			seen.add(file.filePath);
 
@@ -158,16 +235,16 @@ export class SessionStore {
 				if (cached.meta) {
 					sessions.push(cached.meta);
 				}
-				onProgress?.({ scanned: index + 1, total: files.length, parsed });
 				continue;
 			}
 
 			try {
-				const meta = await this.scanMeta(file);
+				const { meta, resume } = await this.scanMeta(file, cached);
 				this.cache.set(file.filePath, {
 					mtimeMs: file.mtimeMs,
 					size: file.size,
 					meta: meta ?? null,
+					resume,
 				});
 				dirty = true;
 				parsed++;
@@ -178,8 +255,26 @@ export class SessionStore {
 				// An unreadable transcript should not take down the whole scan.
 			}
 
-			onProgress?.({ scanned: index + 1, total: files.length, parsed });
+			progress(index + 1);
+			const now = Date.now();
+			if (now - lastPartial >= PARTIAL_INTERVAL_MS && revision === this.revision) {
+				lastPartial = now;
+				// What is scanned so far, plus the previous results for the rest.
+				const rest = files
+					.slice(index + 1)
+					.map((pending) => this.cache.get(pending.filePath)?.meta)
+					.filter((meta): meta is SessionMeta => !!meta);
+				this.loaded = sortByRecent([...sessions, ...rest]);
+				this.emit({ type: "sessions", sessions: this.loaded, final: false });
+			}
+			if (dirty && now - lastSave >= SAVE_INTERVAL_MS) {
+				// A long cold scan should not be lost if the window closes.
+				lastSave = now;
+				dirty = false;
+				this.saveCacheToDisk();
+			}
 		}
+		progress(files.length);
 
 		if (revision !== this.revision) return [];
 
@@ -195,9 +290,56 @@ export class SessionStore {
 			this.saveCacheToDisk();
 		}
 
-		sessions.sort((a, b) => Date.parse(b.lastTimestamp) - Date.parse(a.lastTimestamp));
-		this.loaded = sessions;
-		return sessions;
+		this.loaded = sortByRecent(sessions);
+		return this.loaded;
+	}
+
+	/** Cached entries that belong to the current homes and agent filter. */
+	private cachedSessions(): SessionMeta[] {
+		const directories = this.transcriptDirectories;
+		const sessions: SessionMeta[] = [];
+		for (const [filePath, entry] of this.cache) {
+			if (entry.meta && directories.some((directory) => isInside(directory, filePath))) {
+				sessions.push(entry.meta);
+			}
+		}
+		return sortByRecent(sessions);
+	}
+
+	/**
+	 * Index entry for one transcript, without waiting for a full scan. Used
+	 * to open a session the list has not caught up with yet.
+	 */
+	async metaFor(filePath: string): Promise<SessionMeta | undefined> {
+		const known = this.loaded.find((session) => session.filePath === filePath);
+		if (known) {
+			return known;
+		}
+		let stat: fs.Stats;
+		try {
+			stat = fs.statSync(filePath);
+		} catch {
+			return undefined;
+		}
+		const cached = this.cache.get(filePath);
+		if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+			return cached.meta ?? undefined;
+		}
+		const file: TranscriptFile = {
+			provider: this.isCodex(filePath) ? "codex" : "claude",
+			filePath,
+			projectDir: path.basename(path.dirname(filePath)),
+			mtimeMs: stat.mtimeMs,
+			size: stat.size,
+		};
+		const { meta, resume } = await this.scanMeta(file, cached);
+		this.cache.set(filePath, {
+			mtimeMs: stat.mtimeMs,
+			size: stat.size,
+			meta: meta ?? null,
+			resume,
+		});
+		return meta;
 	}
 
 	/** Every `.jsonl` under `projects/`, with the stat data the cache keys on. */
@@ -247,13 +389,20 @@ export class SessionStore {
 		return files;
 	}
 
-	private async scanMeta(file: TranscriptFile): Promise<SessionMeta | undefined> {
-		if (file.provider === "codex")
-			return scanCodexMeta(file.filePath, file.projectDir, file.size);
+	private async scanMeta(
+		file: TranscriptFile,
+		cached?: CacheEntry,
+	): Promise<{ meta: SessionMeta | undefined; resume?: CodexScanResume }> {
+		if (file.provider === "codex") {
+			// A growing rollout is read on from where the last scan stopped.
+			return scanCodexRollout(file.filePath, file.size, cached?.resume);
+		}
 		const meta = await scanSessionMeta(file.filePath, file.projectDir, file.size);
-		return meta
-			? { ...meta, provider: "claude", nativeId: meta.id, id: "claude:" + meta.id }
-			: undefined;
+		return {
+			meta: meta
+				? { ...meta, provider: "claude", nativeId: meta.id, id: "claude:" + meta.id }
+				: undefined,
+		};
 	}
 	private listTranscripts(): TranscriptFile[] {
 		const files = this.agentFilter !== "codex" ? this.listClaudeTranscripts() : [];
@@ -292,10 +441,9 @@ export class SessionStore {
 	private isCodex(filePath: string): boolean {
 		if (this.loaded.some((s) => s.filePath === filePath && s.provider === "codex")) return true;
 		if (!this.codexHome) return false;
-		return ["sessions", "archived_sessions"].some((dir) => {
-			const relative = path.relative(path.join(this.codexHome, dir), filePath);
-			return !!relative && !relative.startsWith("..") && !path.isAbsolute(relative);
-		});
+		return ["sessions", "archived_sessions"].some((dir) =>
+			isInside(path.join(this.codexHome, dir), filePath),
+		);
 	}
 	/** Full message list for one session. */
 	async openSession(
@@ -359,7 +507,7 @@ export class SessionStore {
 				// A session indexed since the last scan; index it now so the
 				// result row has a title and a project to show.
 				try {
-					meta = await this.scanMeta(file);
+					meta = (await this.scanMeta(file)).meta;
 				} catch {
 					continue;
 				}
@@ -544,6 +692,7 @@ export class SessionStore {
 
 	/** Forget every cached result, so the next load re-reads all transcripts. */
 	clearCache(): void {
+		this.revision++;
 		this.cache.clear();
 		this.loaded = [];
 		try {
@@ -586,4 +735,13 @@ export class SessionStore {
 			// Losing the cache costs a rescan, nothing more.
 		}
 	}
+}
+
+function sortByRecent(sessions: SessionMeta[]): SessionMeta[] {
+	return sessions.sort((a, b) => Date.parse(b.lastTimestamp) - Date.parse(a.lastTimestamp));
+}
+
+function isInside(directory: string, filePath: string): boolean {
+	const relative = path.relative(directory, filePath);
+	return !!relative && !relative.startsWith("..") && !path.isAbsolute(relative);
 }

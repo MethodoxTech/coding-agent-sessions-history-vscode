@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { parseCodexSession, scanCodexMeta } from "../codex/parser";
+import { parseCodexSession, scanCodexMeta, scanCodexRollout } from "../codex/parser";
 import { SessionStore } from "../store/sessionStore";
 import { sessionToMarkdown } from "../ui/markdownExport";
 import { resolveCodexHome } from "../claude/paths";
@@ -193,6 +193,142 @@ test("configuration switch during the first scan returns only the final source",
 		store.configure(path.join(f.dir, "missing"), codex, "claude");
 		assert.deepEqual(await loading, []);
 		assert.deepEqual(store.sessions, []);
+	} finally {
+		f.cleanup();
+	}
+});
+test("a growing rollout resumes where the last scan stopped and matches a full scan", async () => {
+	const f = fixture();
+	try {
+		// Longer than one read chunk, so lines straddle chunk boundaries.
+		const big = row("response_item", {
+			type: "custom_tool_call_output",
+			call_id: "call-3",
+			output: "x".repeat(1_500_000) + " exit_code: 2",
+		});
+		const later = row("response_item", {
+			type: "message",
+			role: "user",
+			content: [{ type: "input_text", text: "Second prompt" }],
+		});
+		const call = row("response_item", { type: "custom_tool_call", call_id: "call-3", name: "shell" });
+		const full = [...records, call, big, later].map((r) => JSON.stringify(r) + "\n").join("");
+		// Cut inside the big line: the first scan sees it partially written.
+		const cut = full.indexOf("xxxx") + 1000;
+		fs.writeFileSync(f.file, full.slice(0, cut));
+		const first = await scanCodexRollout(f.file, cut);
+		assert.equal(first.meta?.userMessageCount, 1);
+		assert.equal(first.meta?.hasErrors, false);
+		assert.ok(first.resume.offset > 0 && first.resume.offset < cut);
+
+		fs.writeFileSync(f.file, full);
+		const resumed = await scanCodexRollout(f.file, full.length, first.resume);
+		const fresh = await scanCodexRollout(f.file, full.length);
+		assert.deepEqual(resumed.meta, fresh.meta);
+		assert.equal(resumed.resume.offset, full.length);
+		assert.equal(fresh.meta?.userMessageCount, 2);
+		assert.equal(fresh.meta?.hasErrors, true);
+		assert.equal(fresh.meta?.title, "Find the needle");
+
+		// The viewer agrees with the index about the failed tool call.
+		const messages = await parseCodexSession(f.file);
+		assert.ok(messages.some((m) => m.toolCalls?.some((c) => c.isError)));
+
+		// A file replaced rather than appended to is scanned from the start.
+		const replaced = [row("session_meta", { id: "other" }), later]
+			.map((r) => JSON.stringify(r) + "\n")
+			.join("")
+			.padEnd(full.length + 10, " ");
+		fs.writeFileSync(f.file, replaced);
+		const rescanned = await scanCodexRollout(f.file, replaced.length, resumed.resume);
+		assert.equal(rescanned.meta?.nativeId, "other");
+		assert.equal(rescanned.meta?.userMessageCount, 1);
+	} finally {
+		f.cleanup();
+	}
+});
+test("the index matches the full parse when key order differs from Codex's own", async () => {
+	const reorder = (r: { type: string; timestamp: string; payload: unknown }) => ({
+		payload: r.payload,
+		timestamp: r.timestamp,
+		type: r.type,
+	});
+	const f = fixture(records.map(reorder));
+	try {
+		const meta = await scanCodexMeta(f.file, "", 100);
+		assert.equal(meta?.userMessageCount, 1);
+		assert.equal(meta?.toolCallCount, 2);
+		assert.equal(meta?.messageCount, 5);
+		assert.equal(meta?.timestamp, stamp);
+		const messages = await parseCodexSession(f.file);
+		assert.equal(meta?.messageCount, messages.filter((m) => m.role !== "system").length);
+	} finally {
+		f.cleanup();
+	}
+});
+test("cached sessions are available before the first scan finishes", async () => {
+	const f = fixture();
+	try {
+		const codex = path.join(f.dir, "codex");
+		fs.mkdirSync(path.join(codex, "sessions"), { recursive: true });
+		fs.copyFileSync(f.file, path.join(codex, "sessions", "a.jsonl"));
+		const cache = path.join(f.dir, "cache.json");
+		const missing = path.join(f.dir, "missing");
+		await new SessionStore(cache, missing, codex, "both").load();
+
+		const store = new SessionStore(cache, missing, codex, "both");
+		assert.equal(store.sessions.length, 1);
+		const events: string[] = [];
+		store.subscribe((e) => events.push(e.type === "sessions" ? `sessions:${e.final}` : e.type));
+		await store.load();
+		assert.equal(events[events.length - 1], "sessions:true");
+		// Out of scope for the current filter, even though it is cached.
+		store.configure(missing, codex, "claude");
+		assert.equal(store.sessions.length, 0);
+		assert.equal((await store.metaFor(path.join(codex, "sessions", "a.jsonl")))?.nativeId, "shared-id");
+	} finally {
+		f.cleanup();
+	}
+});
+test("inline images are left out of messages, tool output and search", async () => {
+	const image = "data:image/png;base64," + "iVBORw0KGgo".repeat(300_000);
+	const f = fixture([
+		row("session_meta", { id: "pictures", cwd: "/demo" }),
+		row("event_msg", { type: "user_message", message: "What is on screen?", images: [image] }),
+		row("response_item", {
+			type: "message",
+			role: "user",
+			content: [
+				{ type: "input_text", text: "What is on screen?" },
+				{ type: "input_image", image_url: image },
+			],
+		}),
+		row("response_item", { type: "custom_tool_call", call_id: "shot", name: "exec", input: "screenshot" }),
+		row("response_item", {
+			type: "custom_tool_call_output",
+			call_id: "shot",
+			output: [
+				{ type: "input_text", text: "Script completed" },
+				{ type: "input_image", image_url: image },
+			],
+		}),
+		row("response_item", {
+			type: "message",
+			role: "assistant",
+			content: [{ type: "output_text", text: "A login form" }],
+		}),
+	]);
+	try {
+		const meta = await scanCodexMeta(f.file, "", 100);
+		assert.equal(meta?.userMessageCount, 1);
+		assert.equal(meta?.toolCallCount, 1);
+		assert.equal(meta?.title, "What is on screen?");
+		assert.ok(!meta?.preview.includes("base64"));
+
+		const messages = await parseCodexSession(f.file, { toolOutputLimit: 100000 });
+		assert.ok(!JSON.stringify(messages).includes("iVBORw0KGgo"));
+		assert.equal(messages[0].text, "What is on screen?\n[Image]");
+		assert.equal(messages[1].toolCalls?.[0].output, "Script completed\n[Image]");
 	} finally {
 		f.cleanup();
 	}

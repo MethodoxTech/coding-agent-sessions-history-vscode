@@ -2,7 +2,7 @@
 	"name": "coding-agent-sessions-history",
 	"displayName": "Coding Agent Sessions History",
 	"description": "Browse, search and export your Claude Code and Codex session history. Fully local, no telemetry, no paywall.",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"publisher": "methodox",
 	"license": "MIT",
 	"author": "Charles Zhang",

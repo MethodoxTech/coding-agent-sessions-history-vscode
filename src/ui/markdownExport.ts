@@ -54,11 +54,13 @@ export function sessionToMarkdown(
 		}
 
 		const heading =
-			message.role === "user"
-				? "### You"
-				: meta?.provider === "codex"
-					? "### Codex"
-					: "### Claude";
+			message.subtype === "notification"
+				? "### Notification"
+				: message.role === "user"
+					? "### You"
+					: meta?.provider === "codex"
+						? "### Codex"
+						: "### Claude";
 		const model = message.model ? ` — ${message.model}` : "";
 		const queued = message.subtype === "queued" ? " (queued)" : "";
 		const sidechain = message.sidechain ? " (subagent)" : "";

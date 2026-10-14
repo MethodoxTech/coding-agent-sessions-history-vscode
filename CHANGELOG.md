@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.1
+
+- **From you** now means what you typed. Claude Code injects notices as
+  user-role messages — a background task finishing, say — and on a long session
+  those outnumbered your own messages several times over, so the scope that
+  claims to be from you was mostly not. They arrive both as ordinary messages
+  and as queued commands, and both routes are now recognised
+- Injected notices get their own **Notifications** scope, and are labelled and
+  styled as notices rather than as something you wrote. They still appear under
+  **All messages**, since they record what actually happened
+- Session message counts separate the two, and a session is never titled after
+  a notice that happened to arrive before your first message
+- Codex sessions are unaffected; their transcripts carry no such notices
+
 ## 0.2.0
 
 - The session list no longer waits for indexing. Sessions indexed last time

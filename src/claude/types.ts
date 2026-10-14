@@ -225,7 +225,11 @@ export interface ConversationMessage {
 	model?: string;
 	/** Subagent thread depth: 0 for the main thread, 1 for Task sidechains. */
 	sidechain?: boolean;
-	/** For system records: the subtype, e.g. "api_error" or "compact_boundary". */
+	/**
+	 * A finer classification than the role: the system record's own subtype
+	 * ("api_error", "compact_boundary"), "queued" for a prompt typed while the
+	 * agent was busy, or "notification" for an injected notice.
+	 */
 	subtype?: string;
 	level?: string;
 	usage?: TokenUsage;
@@ -256,7 +260,10 @@ export interface SessionMeta {
 	gitBranch?: string;
 	cliVersion?: string;
 	messageCount: number;
+	/** Messages you typed, excluding notices the agent injected. */
 	userMessageCount: number;
+	/** Injected notices that arrived as user-role messages. */
+	notificationCount: number;
 	assistantMessageCount: number;
 	toolCallCount: number;
 	fileSize: number;

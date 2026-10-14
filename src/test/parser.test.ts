@@ -11,7 +11,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 
-import { extractMatchContext, extractUserText, parseSession, scanSessionMeta, simplifyModelName } from "../claude/parser";
+import {
+	extractMatchContext,
+	extractUserText,
+	isNotificationText,
+	parseSession,
+	scanSessionMeta,
+	simplifyModelName,
+} from "../claude/parser";
 import { anyBasename, anyDirname, sessionIdFromPath } from "../claude/paths";
 import { sessionToMarkdown } from "../ui/markdownExport";
 
@@ -76,6 +83,128 @@ describe("user text", () => {
 			{ type: "text", text: "Do the thing" },
 		]);
 		assert.equal(text, "Do the thing");
+	});
+});
+
+describe("injected notifications", () => {
+	const notice = [
+		"<task-notification>",
+		"<task-id>abc</task-id>",
+		"<status>stopped</status>",
+		"<summary>Background shell command did not finish</summary>",
+		"</task-notification>",
+	].join("\n");
+
+	it("marks a notice as such rather than as something you typed", async () => {
+		const filePath = writeTranscript("notice.jsonl", [
+			{
+				type: "user",
+				timestamp: "2026-09-01T10:00:00.000Z",
+				message: { role: "user", content: "Start the long job" },
+			},
+			{
+				type: "user",
+				timestamp: "2026-09-01T10:05:00.000Z",
+				message: { role: "user", content: [{ type: "text", text: notice }] },
+			},
+			{
+				type: "assistant",
+				message: { role: "assistant", model: "claude-opus-5", content: [{ type: "text", text: "Noted." }] },
+			},
+		]);
+
+		const messages = await parseSession(filePath);
+		const user = messages.filter((m) => m.role === "user");
+		assert.equal(user.length, 2, "the notice is kept, not dropped");
+		assert.equal(user[0].subtype, undefined);
+		assert.equal(user[1].subtype, "notification");
+		// Its text survives, so the record of what happened is still readable.
+		assert.ok(user[1].text.includes("Background shell command"));
+	});
+
+	it("counts notices apart from what you typed", async () => {
+		const records: unknown[] = [
+			{
+				type: "user",
+				timestamp: "2026-09-01T10:00:00.000Z",
+				message: { role: "user", content: "Only this one is mine" },
+			},
+			{
+				type: "assistant",
+				message: { role: "assistant", model: "claude-opus-5", content: [{ type: "text", text: "Fine." }] },
+			},
+		];
+		for (let i = 0; i < 5; i++) {
+			records.push({
+				type: "user",
+				timestamp: "2026-09-01T10:0" + i + ":00.000Z",
+				message: { role: "user", content: notice },
+			});
+		}
+
+		const meta = await scanSessionMeta(writeTranscript("counts.jsonl", records), "p", 10);
+		assert.ok(meta);
+		assert.equal(meta.userMessageCount, 1);
+		assert.equal(meta.notificationCount, 5);
+		// Every message is still counted once overall.
+		assert.equal(meta.messageCount, 7);
+	});
+
+	it("never titles a session after a notice", async () => {
+		const meta = await scanSessionMeta(
+			writeTranscript("notice-first.jsonl", [
+				{
+					type: "user",
+					timestamp: "2026-09-01T10:00:00.000Z",
+					message: { role: "user", content: notice },
+				},
+				{
+					type: "user",
+					timestamp: "2026-09-01T10:01:00.000Z",
+					message: { role: "user", content: "Actually my first question" },
+				},
+				{
+					type: "assistant",
+					message: { role: "assistant", model: "claude-opus-5", content: [{ type: "text", text: "Hi" }] },
+				},
+			]),
+			"p",
+			10
+		);
+		assert.ok(meta);
+		assert.equal(meta.preview, "Actually my first question");
+		assert.equal(meta.title, "Actually my first question");
+	});
+
+	it("recognises the family, not one fixed name", () => {
+		assert.equal(isNotificationText("<task-notification>x</task-notification>"), true);
+		// Leading whitespace and newlines appear before the tag in practice.
+		assert.equal(isNotificationText("  \n\n<background-task-notification>x"), true);
+		assert.equal(isNotificationText("<notification>x"), false, "needs the prefixed form");
+		assert.equal(isNotificationText("I need a notification when it finishes"), false);
+	});
+
+	it("leaves a message yours when a notice is only part of it", async () => {
+		const filePath = writeTranscript("mixed.jsonl", [
+			{
+				type: "user",
+				timestamp: "2026-09-01T10:00:00.000Z",
+				message: {
+					role: "user",
+					content: [
+						{ type: "text", text: "Carry on please" },
+						{ type: "text", text: notice },
+					],
+				},
+			},
+			{
+				type: "assistant",
+				message: { role: "assistant", model: "claude-opus-5", content: [{ type: "text", text: "ok" }] },
+			},
+		]);
+
+		const messages = await parseSession(filePath);
+		assert.equal(messages[0].subtype, undefined, "you typed part of it, so it is yours");
 	});
 });
 

@@ -813,6 +813,20 @@ input[type="search"]::-webkit-search-cancel-button {
 	background: var(--accent-wash);
 }
 
+/*
+ * An injected notice is a user-role message nobody typed, so it drops the
+ * accent the user bubble carries and reads as the aside it is.
+ */
+.message.user.is-notification .message-role {
+	color: var(--text-muted);
+}
+
+.message.user.is-notification .message-body {
+	border-left-color: var(--stroke-surface);
+	background: var(--fill-hover);
+	color: var(--text-muted);
+}
+
 .message.system {
 	display: flex;
 	align-items: center;

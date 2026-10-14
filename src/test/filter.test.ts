@@ -67,6 +67,12 @@ const conversation: ConversationMessage[] = [
 			}),
 		],
 	}),
+	message({
+		index: 6,
+		role: "user",
+		subtype: "notification",
+		text: "<task-notification><status>done</status><summary>cache rebuilt</summary></task-notification>",
+	}),
 ];
 
 describe("parseQuery", () => {
@@ -86,6 +92,7 @@ describe("parseQuery", () => {
 describe("scopes", () => {
 	it("recognises only the scopes it defines", () => {
 		assert.equal(isMessageScope("tools"), true);
+		assert.equal(isMessageScope("notifications"), true);
 		assert.equal(isMessageScope("everything"), false);
 		assert.equal(isMessageScope(7), false);
 	});
@@ -95,10 +102,37 @@ describe("scopes", () => {
 		assert.equal(messages.length, conversation.length);
 	});
 
-	it("narrows to your own messages", () => {
+	it("narrows to your own messages, leaving out injected notices", () => {
+		// A notice arrives as a user-role message but nobody typed it, so the
+		// scope that means "from you" has to leave it out.
 		const { messages } = filterMessages(conversation, "", "user");
 		assert.deepEqual(
 			messages.map((m) => m.index),
+			[0]
+		);
+	});
+
+	it("collects injected notices under their own scope", () => {
+		const { messages } = filterMessages(conversation, "", "notifications");
+		assert.deepEqual(
+			messages.map((m) => m.index),
+			[6]
+		);
+	});
+
+	it("still shows notices under all messages", () => {
+		const { messages } = filterMessages(conversation, "", "all");
+		assert.ok(messages.some((m) => m.subtype === "notification"));
+	});
+
+	it("searches the text of a notice", () => {
+		assert.deepEqual(
+			filterMessages(conversation, "cache rebuilt", "notifications").messages.map((m) => m.index),
+			[6]
+		);
+		// The same words under the typed scope find your message, not the notice.
+		assert.deepEqual(
+			filterMessages(conversation, "cache", "user").messages.map((m) => m.index),
 			[0]
 		);
 	});

@@ -11,9 +11,16 @@
 import { ConversationMessage, ToolCall } from "./types";
 
 /** Which messages a filter considers, before any text matching. */
-export type MessageScope = "all" | "user" | "assistant" | "tools" | "changes";
+export type MessageScope = "all" | "user" | "notifications" | "assistant" | "tools" | "changes";
 
-export const MESSAGE_SCOPES: MessageScope[] = ["all", "user", "assistant", "tools", "changes"];
+export const MESSAGE_SCOPES: MessageScope[] = [
+	"all",
+	"user",
+	"notifications",
+	"assistant",
+	"tools",
+	"changes",
+];
 
 export function isMessageScope(value: unknown): value is MessageScope {
 	return typeof value === "string" && (MESSAGE_SCOPES as string[]).includes(value);
@@ -49,7 +56,12 @@ export function parseQuery(query: string): string[] {
 function matchesScope(message: ConversationMessage, scope: MessageScope): boolean {
 	switch (scope) {
 		case "user":
-			return message.role === "user";
+			// What you typed. Claude Code injects notices as user-role messages
+			// too, and on a long session those can outnumber your own several
+			// times over, so they belong to their own scope.
+			return message.role === "user" && message.subtype !== "notification";
+		case "notifications":
+			return message.subtype === "notification";
 		case "assistant":
 			// Assistant turns that only carry tool calls are the tools scope;
 			// this one is for what Claude actually said.

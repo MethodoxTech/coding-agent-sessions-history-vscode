@@ -539,6 +539,7 @@
 		const scopes = [
 			["all", "All messages"],
 			["user", "From you"],
+			["notifications", "Notifications"],
 			["assistant", "From assistant"],
 			["tools", "Tool calls"],
 			["changes", "File changes"],
@@ -795,14 +796,23 @@
 		let html =
 			'<div class="message ' +
 			message.role +
+			(message.subtype === "notification" ? " is-notification" : "") +
 			(message.sidechain ? " is-sidechain" : "") +
 			'" data-index="' +
 			message.index +
 			'">';
 
 		html += '<div class="message-role">';
+		// An injected notice arrives as a user-role message, but nobody typed
+		// it, so it is not labelled as though you had.
 		html +=
-			message.role === "user" ? "You" : state.meta?.provider === "codex" ? "Codex" : "Claude";
+			message.subtype === "notification"
+				? "Notification"
+				: message.role === "user"
+					? "You"
+					: state.meta?.provider === "codex"
+						? "Codex"
+						: "Claude";
 		if (message.model) {
 			html += '<span class="badge">' + escapeHtml(message.model) + "</span>";
 		}

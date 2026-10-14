@@ -277,6 +277,9 @@ function buildTooltip(session: SessionMeta): vscode.MarkdownString {
 		`${session.toolCallCount} tool calls`,
 		formatSize(session.fileSize),
 	];
+	if (session.notificationCount > 0) {
+		facts.splice(2, 0, `${session.notificationCount} notifications`);
+	}
 	md.appendMarkdown(`$(list-unordered) ${facts.join(" · ")}\n\n`);
 
 	if (session.models.length > 0) {

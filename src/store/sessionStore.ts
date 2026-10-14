@@ -20,7 +20,7 @@ import { ConversationMessage, SearchMatch, SessionMeta, SessionStats } from "../
  * existing cache is discarded rather than serving stale results forever — a
  * transcript that has not changed is otherwise never re-read.
  */
-const CACHE_VERSION = 5;
+const CACHE_VERSION = 6;
 
 interface CacheEntry {
 	mtimeMs: number;

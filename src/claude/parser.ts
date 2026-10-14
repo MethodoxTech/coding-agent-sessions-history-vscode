@@ -57,6 +57,42 @@ function isSyntheticText(text: string): boolean {
 	return SYNTHETIC_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
 
+/**
+ * Notices Claude Code injects as user-role messages — a background task
+ * finishing, say — which nobody typed.
+ *
+ * These are kept rather than dropped, because they record something that
+ * actually happened in the session, but they are marked so they are not
+ * presented or counted as messages you wrote. On a long session they can
+ * outnumber what you actually typed several times over.
+ *
+ * The pattern matches any `<…-notification>` opening tag rather than one fixed
+ * name, since the family has grown over time and a new member would otherwise
+ * silently be attributed to you.
+ */
+const NOTIFICATION_TAG = /^<[a-z0-9]+(?:-[a-z0-9]+)*-notification[\s>]/i;
+
+export function isNotificationText(text: string): boolean {
+	return NOTIFICATION_TAG.test(text.trimStart());
+}
+
+/** True when a user-role message is an injected notice, not something typed. */
+function isNotificationContent(content: ApiMessage["content"]): boolean {
+	if (typeof content === "string") {
+		return isNotificationText(content);
+	}
+	if (!Array.isArray(content)) {
+		return false;
+	}
+	const texts = content
+		.filter((block): block is TextBlock => block?.type === "text" && typeof (block as TextBlock).text === "string")
+		.map((block) => block.text)
+		.filter((text) => !isSyntheticText(text));
+	// Only a message made entirely of notices is one; a notice appended to
+	// something you typed leaves it yours.
+	return texts.length > 0 && texts.every(isNotificationText);
+}
+
 /** Strip ANSI escape sequences, which appear in captured command output. */
 function stripAnsi(text: string): string {
 	// eslint-disable-next-line no-control-regex
@@ -405,6 +441,7 @@ export async function scanSessionMeta(
 	let cliVersion: string | undefined;
 
 	let userMessageCount = 0;
+	let notificationCount = 0;
 	let assistantMessageCount = 0;
 	let toolCallCount = 0;
 	let hasSidechains = false;
@@ -480,6 +517,27 @@ export async function scanSessionMeta(
 					}
 					break;
 				}
+				case "attachment": {
+					const attachment = record.attachment as
+						| { type?: string; prompt?: unknown }
+						| undefined;
+					if (attachment?.type !== "queued_command") {
+						break;
+					}
+					const prompt = attachment.prompt as ApiMessage["content"];
+					if (!extractUserText(prompt)) {
+						break;
+					}
+					// A prompt typed while Claude was busy is still yours; a
+					// notice queued the same way is not.
+					if (isNotificationContent(prompt)) {
+						notificationCount++;
+					} else {
+						userMessageCount++;
+					}
+					break;
+				}
+
 				case "user": {
 					const message = record.message as ApiMessage | undefined;
 					if (message?.role !== "user") {
@@ -492,6 +550,13 @@ export async function scanSessionMeta(
 					if (!text) {
 						// Slash-command plumbing and other synthetic entries are
 						// not messages a person sent, so they are not counted.
+						break;
+					}
+					if (isNotificationContent(message.content)) {
+						// Injected notices are counted separately, and never
+						// become the preview — a session whose first user-role
+						// record is one would otherwise be titled after it.
+						notificationCount++;
 						break;
 					}
 					userMessageCount++;
@@ -537,7 +602,7 @@ export async function scanSessionMeta(
 		return undefined;
 	}
 
-	const messageCount = userMessageCount + assistantMessageCount;
+	const messageCount = userMessageCount + notificationCount + assistantMessageCount;
 	if (messageCount === 0) {
 		return undefined;
 	}
@@ -577,6 +642,7 @@ export async function scanSessionMeta(
 		cliVersion,
 		messageCount,
 		userMessageCount,
+		notificationCount,
 		assistantMessageCount,
 		toolCallCount,
 		fileSize,
@@ -701,6 +767,7 @@ function handleUserRecord(
 		index: messages.length,
 		role: "user",
 		text,
+		subtype: isNotificationContent(content) ? "notification" : undefined,
 		timestamp: typeof record.timestamp === "string" ? record.timestamp : undefined,
 		sidechain: isSidechain || undefined,
 	});
@@ -847,7 +914,8 @@ function handleAttachmentRecord(record: TranscriptRecord, messages: Conversation
 		return;
 	}
 
-	const text = extractUserText(attachment.prompt as ApiMessage["content"]);
+	const prompt = attachment.prompt as ApiMessage["content"];
+	const text = extractUserText(prompt);
 	if (!text) {
 		return;
 	}
@@ -856,7 +924,9 @@ function handleAttachmentRecord(record: TranscriptRecord, messages: Conversation
 		index: messages.length,
 		role: "user",
 		text,
-		subtype: "queued",
+		// Notices are queued the same way prompts are, so they have to be
+		// recognised here too; otherwise they would still read as yours.
+		subtype: isNotificationContent(prompt) ? "notification" : "queued",
 		timestamp: typeof record.timestamp === "string" ? record.timestamp : undefined,
 	});
 }

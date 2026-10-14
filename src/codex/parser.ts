@@ -249,6 +249,9 @@ async function read(
 		gitBranch,
 		messageCount: users + assistants,
 		userMessageCount: users,
+		// Codex transcripts carry no equivalent of the notices Claude Code
+		// injects as user-role messages, so every user message here is yours.
+		notificationCount: 0,
 		assistantMessageCount: assistants,
 		toolCallCount: tools,
 		fileSize: 0,
@@ -480,6 +483,7 @@ function metaFromState(filePath: string, s: CodexScanState, fileSize: number): S
 		gitBranch: s.gitBranch,
 		messageCount: users + assistants,
 		userMessageCount: users,
+		notificationCount: 0,
 		assistantMessageCount: assistants,
 		toolCallCount: s.tools,
 		fileSize,
